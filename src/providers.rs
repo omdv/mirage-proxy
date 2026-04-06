@@ -14,7 +14,7 @@ pub static PROVIDERS: &[Provider] = &[
     // Major LLM providers
     Provider { name: "Anthropic",       prefix: "/anthropic",    upstream: "https://api.anthropic.com" },
     Provider { name: "OpenAI",          prefix: "/openai",       upstream: "https://api.openai.com" },
-    Provider { name: "OpenAI Codex",    prefix: "/codex",        upstream: "https://chatgpt.com/backend-api" },
+    Provider { name: "OpenAI Codex",    prefix: "/codex",        upstream: "https://chatgpt.com/backend-api/codex" },
     Provider { name: "Google AI",       prefix: "/google",       upstream: "https://generativelanguage.googleapis.com" },
     Provider { name: "Google Vertex",   prefix: "/vertex",       upstream: "https://us-central1-aiplatform.googleapis.com" },
     Provider { name: "Mistral",         prefix: "/mistral",      upstream: "https://api.mistral.ai" },
