@@ -6,7 +6,7 @@ mod patterns;
 mod providers;
 mod proxy;
 mod redactor;
-mod secret_scan;
+
 mod session;
 mod stats;
 mod update;
