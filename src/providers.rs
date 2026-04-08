@@ -25,6 +25,7 @@ pub static PROVIDERS: &[Provider] = &[
     Provider { name: "DeepSeek",        prefix: "/deepseek",     upstream: "https://api.deepseek.com" },
     Provider { name: "Alibaba Qwen",    prefix: "/alibaba",      upstream: "https://dashscope.aliyuncs.com" },
     Provider { name: "Zhipu / GLM",     prefix: "/zhipu",        upstream: "https://open.bigmodel.cn" },
+    Provider { name: "ZAI / GLM",       prefix: "/zai",          upstream: "https://api.z.ai/api/coding/paas/v4" },
     Provider { name: "Moonshot / Kimi",  prefix: "/moonshot",    upstream: "https://api.moonshot.cn" },
     Provider { name: "Baichuan",        prefix: "/baichuan",     upstream: "https://api.baichuan-ai.com" },
     Provider { name: "Yi / 01.AI",      prefix: "/yi",           upstream: "https://api.lingyiwanwu.com" },
