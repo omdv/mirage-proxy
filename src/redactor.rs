@@ -1,6 +1,10 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
+
+#[path = "secret_scan.rs"]
+mod secret_scan;
+use secret_scan::scan_text;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
@@ -182,6 +186,24 @@ pub fn detect(text: &str) -> Vec<PiiEntity> {
         }
     }
 
+    // Supplemental string-based secret scan (password vars + encoded values)
+    for finding in scan_text("<memory>", text) {
+        let overlaps_existing = entities.iter().any(|e| {
+            finding.start < e.end && finding.end > e.start
+        });
+        if overlaps_existing {
+            continue;
+        }
+
+        entities.push(PiiEntity {
+            kind: pii_kind_from_secret_pattern(&finding.pattern_name),
+            pattern_name: Some(finding.pattern_name),
+            start: finding.start,
+            end: finding.end,
+            original: finding.matched_text,
+        });
+    }
+
     // High-entropy detection (catch unknown secret formats)
     for m in HIGH_ENTROPY_RE.find_iter(text) {
         let s = m.as_str();
@@ -219,6 +241,23 @@ pub fn detect(text: &str) -> Vec<PiiEntity> {
     // Sort by start position descending for safe replacement
     deduped.sort_by(|a, b| b.start.cmp(&a.start));
     deduped
+}
+
+fn pii_kind_from_secret_pattern(pattern_name: &str) -> PiiKind {
+    let lower = pattern_name.to_lowercase();
+    if lower.contains("github") {
+        return PiiKind::GithubToken;
+    }
+    if lower.contains("aws") {
+        return PiiKind::AwsKey;
+    }
+    if lower.contains("url") || lower.contains("connection") {
+        return PiiKind::ConnectionString;
+    }
+    if lower.contains("token") || lower.contains("api key") {
+        return PiiKind::GenericApiKey;
+    }
+    PiiKind::HighEntropy
 }
 
 /// Redact all PII from text using a token map for consistency
@@ -321,5 +360,24 @@ mod tests {
         let secret = "aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hI6kL9";
         let entities = detect(secret);
         assert!(entities.iter().any(|e| e.kind == PiiKind::HighEntropy));
+    }
+
+    #[test]
+    fn test_password_var_detection_from_secret_scan() {
+        let entities = detect("password: my_very_long_pass");
+        assert!(entities
+            .iter()
+            .any(|e| e.pattern_name.as_deref() == Some("Password in YAML")));
+    }
+
+    #[test]
+    fn test_base64_secret_detection_from_secret_scan() {
+        let entities = detect("password: bXlfdmVyeV9sb25nX3Bhc3MK");
+        assert!(entities.iter().any(|e| {
+            e.pattern_name
+                .as_deref()
+                .map(|p| p.contains("Base64") || p.contains("Password"))
+                .unwrap_or(false)
+        }));
     }
 }
