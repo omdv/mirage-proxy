@@ -718,8 +718,10 @@ fn smart_redact(text: &str, state: &ProxyState, faker: &Faker) -> String {
 
     for entity in &entities {
         let label = entity.kind.label();
+        if state.config.is_excluded_value(&entity.original) {
+            continue;
+        }
         let action = state.config.should_redact(label);
-
         // Global dedup: check if we've ever seen this exact value
         let is_new = {
             let mut seen = state.seen_pii.lock().unwrap();

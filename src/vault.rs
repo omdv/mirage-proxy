@@ -42,12 +42,12 @@ struct SessionMap {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct VaultEntry {
-    fake: String,
-    kind: String,
-    created_at: String,
-    last_used: String,
-    use_count: u64,
+pub struct VaultEntry {
+    pub fake: String,
+    pub kind: String,
+    pub created_at: String,
+    pub last_used: String,
+    pub use_count: u64,
 }
 
 /// On-disk format: nonce (12 bytes) || ciphertext
@@ -181,6 +181,18 @@ impl Vault {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// List all session IDs
+    pub fn list_sessions(&self) -> Vec<String> {
+        let inner = self.inner.lock().unwrap();
+        inner.sessions.keys().cloned().collect()
+    }
+
+    /// Get full session mappings with metadata for TUI display
+    pub fn get_session_mappings_full(&self, session_id: &str) -> Option<HashMap<String, VaultEntry>> {
+        let inner = self.inner.lock().unwrap();
+        inner.sessions.get(session_id).map(|s| s.entries.clone())
     }
 
     /// Store a mapping (original -> fake) — legacy global scope

@@ -43,6 +43,8 @@ aes-gcm = "0.10"
 sha2 = "0.10"
 argon2 = "0.5"
 ctrlc = "3.4"
+ratatui = "0.26"
+crossterm = "0.27"
 
 [profile.release]
 opt-level = 3

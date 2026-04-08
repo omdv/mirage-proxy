@@ -51,12 +51,23 @@ allowlist: []
 blocklist: []
   # - "*@personal.com"
 
+
+# Exclusions: regex patterns for values that should never be redacted
+exclusions:
+  values: []
+  # - "\\[REDACTED_SECRET_\\d+\\]"
+  # - "sha256-[A-Za-z0-9+/=]{20,}"
+  # - "/nix/store/[a-z0-9]{32}-[^\\s\"']+"
 # Audit log
 audit:
   enabled: true
   path: "./mirage-audit.jsonl"
   # Log original values (WARNING: defeats the purpose if log is compromised)
   log_values: false
+
+# Vault (encrypted storage for redaction mappings)
+vault:
+  path: "./mirage-vault.enc"
 
 # Dry run: log what would be redacted without actually redacting
 dry_run: false

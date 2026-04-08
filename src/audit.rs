@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use crate::config::RedactAction;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AuditEntry {
     pub timestamp: String,
     pub kind: String,

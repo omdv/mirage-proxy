@@ -1,3 +1,4 @@
+use regex::Regex;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -24,6 +25,12 @@ pub struct Config {
     pub bypass: Vec<String>,
     #[serde(default)]
     pub audit: AuditConfig,
+    #[serde(default)]
+    pub vault: VaultConfig,
+    #[serde(default)]
+    pub exclusions: ExclusionsConfig,
+    #[serde(skip, default)]
+    exclusion_value_patterns: Vec<Regex>,
     #[serde(default)]
     pub dry_run: bool,
     #[serde(default)]
@@ -102,6 +109,32 @@ impl Default for AuditConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultConfig {
+    #[serde(default = "default_vault_path")]
+    pub path: PathBuf,
+}
+
+impl Default for VaultConfig {
+    fn default() -> Self {
+        VaultConfig {
+            path: default_vault_path(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExclusionsConfig {
+    #[serde(default)]
+    pub values: Vec<String>,
+}
+
+impl Default for ExclusionsConfig {
+    fn default() -> Self {
+        ExclusionsConfig { values: vec![] }
+    }
+}
+
 fn default_bind() -> String {
     "127.0.0.1".to_string()
 }
@@ -119,6 +152,10 @@ fn default_update_timeout_ms() -> u64 {
 }
 fn default_audit_path() -> PathBuf {
     PathBuf::from("./mirage-audit.jsonl")
+}
+
+fn default_vault_path() -> PathBuf {
+    PathBuf::from("./mirage-vault.enc")
 }
 
 fn default_always_redact() -> Vec<String> {
@@ -159,8 +196,9 @@ impl Config {
         for candidate in &candidates {
             if candidate.exists() {
                 if let Ok(contents) = std::fs::read_to_string(candidate) {
-                    match serde_yaml::from_str(&contents) {
-                        Ok(config) => {
+                    match serde_yaml::from_str::<Config>(&contents) {
+                        Ok(mut config) => {
+                            config.compile_exclusions();
                             tracing::info!("Loaded config from {}", candidate.display());
                             return config;
                         }
@@ -173,7 +211,7 @@ impl Config {
         }
 
         tracing::info!("No config file found, using defaults");
-        Config {
+        let mut cfg = Config {
             bind: default_bind(),
             port: default_port(),
             sensitivity: default_sensitivity(),
@@ -183,9 +221,14 @@ impl Config {
             blocklist: vec![],
             bypass: vec![],
             audit: AuditConfig::default(),
+            vault: VaultConfig::default(),
+            exclusions: ExclusionsConfig::default(),
+            exclusion_value_patterns: vec![],
             dry_run: false,
             update_check: UpdateCheckConfig::default(),
-        }
+        };
+        cfg.compile_exclusions();
+        cfg
     }
 
     /// Check if a host/URL should bypass filtering (pass through unmodified)
@@ -197,6 +240,10 @@ impl Config {
             // Match against the upstream URL or just the hostname
             upstream.contains(pattern)
         })
+    }
+
+    pub fn is_excluded_value(&self, value: &str) -> bool {
+        self.exclusion_value_patterns.iter().any(|re| re.is_match(value))
     }
 
     /// Check if a PII kind should be redacted given current sensitivity
@@ -226,6 +273,21 @@ impl Config {
             Sensitivity::Paranoid => RedactAction::Redact,
             _ => RedactAction::Ignore,
         }
+    }
+
+    fn compile_exclusions(&mut self) {
+        self.exclusion_value_patterns = self
+            .exclusions
+            .values
+            .iter()
+            .filter_map(|pattern| match Regex::new(pattern) {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    tracing::warn!("Skipping invalid exclusion regex '{}': {}", pattern, e);
+                    None
+                }
+            })
+            .collect();
     }
 }
 
