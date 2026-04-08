@@ -2,6 +2,7 @@ use base64::{engine::general_purpose, Engine as _};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SecretFinding {
     pub start: usize,

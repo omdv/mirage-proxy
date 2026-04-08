@@ -229,6 +229,7 @@ impl Vault {
 
     /// Get all reverse mappings for rehydration
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn reverse_map(&self) -> Vec<(String, String)> {
         let inner = self.inner.lock().unwrap();
         let mut pairs: Vec<_> = inner.reverse.iter()
@@ -262,6 +263,7 @@ impl Vault {
 
     /// Flush entries older than `max_age` seconds
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn flush_stale(&self, max_age_secs: i64) -> Result<usize, String> {
         let mut inner = self.inner.lock().unwrap();
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(max_age_secs);
@@ -289,6 +291,7 @@ impl Vault {
 
     /// Stats
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn stats(&self) -> VaultStats {
         let inner = self.inner.lock().unwrap();
         VaultStats {
@@ -340,6 +343,7 @@ impl Vault {
 
 #[derive(Debug)]
 #[cfg(test)]
+#[allow(dead_code)]
 pub struct VaultStats {
     pub total_mappings: usize,
     pub ops_since_flush: usize,
