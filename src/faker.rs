@@ -186,6 +186,36 @@ impl Faker {
         fake
     }
 
+    /// Generate an explicit redaction token for a value.
+    ///
+    /// Unlike `fake()`, this does not produce a plausible substitute. It always
+    /// stores and returns an opaque `[REDACTED_...]` token and keeps reverse
+    /// mappings so responses can still be rehydrated when possible.
+    pub fn redact_token(&self, original: &str, kind: &PiiKind) -> String {
+        let mut maps = self.maps.lock().unwrap();
+
+        if let Some(existing) = maps.forward.get(original).cloned() {
+            if existing.starts_with("[REDACTED_") {
+                return existing;
+            }
+        }
+
+        maps.counter += 1;
+        let token = format!("[REDACTED_{}_{}]", kind.label(), maps.counter);
+
+        if let Some(previous) = maps.forward.insert(original.to_string(), token.clone()) {
+            maps.reverse.remove(&previous);
+        }
+        maps.reverse.insert(token.clone(), original.to_string());
+
+        if let Some(ref vault) = self.vault {
+            let sid = self.session_id.as_deref().unwrap_or("default");
+            vault.put_session(sid, original, &token, kind.label());
+        }
+
+        token
+    }
+
     /// Rehydrate: restore fakes back to originals
     pub fn rehydrate(&self, text: &str) -> String {
         self.maps.lock().unwrap().rehydrate(text)

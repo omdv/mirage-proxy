@@ -734,7 +734,23 @@ fn smart_redact(text: &str, state: &ProxyState, faker: &Faker) -> String {
         }
 
         match action {
-            RedactAction::Redact | RedactAction::Mask => {
+            RedactAction::Redact => {
+                let token = faker.redact_token(&entity.original, &entity.kind);
+                result = result.replace(&entity.original, &token);
+                if is_new {
+                    // Print above status bar: clear line, print, newline
+                    let preview = truncate_preview(&entity.original, 40);
+                    let detail = if let Some(ref name) = entity.pattern_name {
+                        format!("{} ({})", label, name)
+                    } else {
+                        label.to_string()
+                    };
+                    let char_count = entity.original.len();
+                    eprint!("\r\x1b[2K  🛡️  {} [{} chars] → {}\n", detail, char_count, preview);
+                    new_redaction_count += 1;
+                }
+            }
+            RedactAction::Mask => {
                 let fake = faker.fake(&entity.original, &entity.kind);
                 result = result.replace(&entity.original, &fake);
                 if is_new {
