@@ -2,15 +2,13 @@
 
 **Your LLM agent sees fake secrets. Your real ones never leave your machine.**
 
-![Mirage Proxy demo](assets/mirage-proxy-preview.gif)
-
 ```
 You:    AKIAQX4BIPW3AHOV29GN       →  Agent sees:  AKIADKRY5CJQX4BIPW3A
 You:    lee.taylor56789@aol.com     →  Agent sees:  chris.hall456@gmail.com
 You:    ghp_abc123secrettoken       →  Agent sees:  ghp_xyz789differentkey
 ```
 
-Single binary. Sub-millisecond. No config needed.
+Single binary. Sub-millisecond. Runs alongside [Pi coding agent](https://github.com/mariozechner/pi-coding-agent) or any OpenAI-compatible client.
 
 ---
 
@@ -31,93 +29,102 @@ Your tool → mirage-proxy (detect → replace with fakes) → Provider API
 Provider API → mirage-proxy (detect fakes → restore originals) → Your tool
 ```
 
-One binary. Runs as a background service. Wrappers control which tools route through it.
+One binary. Run as a local HTTP proxy. Configure your LLM tool to point at it.
 
 ---
 
 ## Install
 
+### From source (cargo)
+
 ```bash
-brew install chandika/tap/mirage-proxy    # macOS / Linux
+cargo install --git https://github.com/omdv/mirage-proxy
 ```
 
-```bash
-scoop bucket add chandika https://github.com/chandika/scoop-bucket
-scoop install mirage-proxy               # Windows
+### Nix flake
+
+```nix
+# flake.nix
+inputs.mirage-proxy.url = "github:omdv/mirage-proxy";
 ```
 
-```bash
-cargo install --locked --git https://github.com/chandika/mirage-proxy  # from source
-```
-
----
-
-## Setup
-
-One command installs the background daemon and wrapper scripts for your tools:
-
-```bash
-mirage-proxy --setup
-```
-
-This scans your PATH for supported tools, installs per-tool wrappers in `~/.mirage/bin/`, and starts the daemon as a background service (launchd on macOS, systemd on Linux, Task Scheduler on Windows).
-
-Then add the wrapper directory to your PATH once:
-
-```bash
-export PATH="$HOME/.mirage/bin:$PATH"
-# Add to ~/.zshrc or ~/.bashrc to persist
-```
-
-That's it. The daemon runs silently in the background. Wrappers decide which tools route through it.
-
-```bash
-codex          # → filtered through mirage
-codex-direct   # → bypasses mirage (original binary)
-```
-
-No global env mutation. Other apps are unaffected. The daemon auto-starts on boot.
-
-To remove everything:
-
-```bash
-mirage-proxy --uninstall
+Or with `fetchFromGitHub` using a version tag:
+```nix
+src = fetchFromGitHub {
+  owner = "omdv";
+  repo = "mirage-proxy";
+  rev = "v0.1.0";
+  sha256 = "sha256-...";
+};
 ```
 
 ---
 
-## Supported tools
+## Quick Start
 
-| Tool | Wrapper installed |
-|---|---|
-| **codex** | `~/.mirage/bin/codex` |
-| **claude** | `~/.mirage/bin/claude` |
-| **cursor** | `~/.mirage/bin/cursor` |
-| **aider** | `~/.mirage/bin/aider` |
-| **opencode** | `~/.mirage/bin/opencode` |
+1. **Start the proxy:**
 
-Each wrapper is a small shell script that sets only the env vars needed for that tool, finds the real binary, and execs it. Nothing else changes.
+   ```bash
+   mirage-proxy
+   ```
+
+   Listens on `http://127.0.0.1:8686`. Use `--port` and `--bind` to customize.
+
+2. **Configure your LLM tool** to use mirage as a proxy. For Pi coding agent, edit `~/.pi/agent/models.json`:
+
+   ```json
+   {
+     "providers": {
+       "anthropic": { "baseUrl": "http://127.0.0.1:8686/anthropic" },
+       "openai":    { "baseUrl": "http://127.0.0.1:8686/openai" },
+       "openrouter":{"baseUrl": "http://127.0.0.1:8686/openrouter" },
+       "zai":       { "baseUrl": "http://127.0.0.1:8686/zai" }
+     }
+   }
+   ```
+
+3. **Verify it's working:** watch the terminal where mirage runs — redactions print in real time.
 
 ---
 
-## OpenClaw
+## Built-in Providers
 
-Native integration. Install the skill:
+Mirage auto-routes requests based on URL path. No per-provider configuration needed — just prefix the path:
 
-```bash
-clawdhub install mirage-proxy
-```
+| Provider       | Path             | Upstream                              |
+|----------------|------------------|---------------------------------------|
+| Anthropic      | `/anthropic`     | `https://api.anthropic.com`           |
+| OpenAI         | `/openai`        | `https://api.openai.com`             |
+| OpenAI Codex   | `/codex`         | `https://chatgpt.com/backend-api/codex` |
+| Google AI      | `/google`        | `https://generativelanguage.googleapis.com` |
+| Google Vertex  | `/vertex`        | `https://us-central1-aiplatform.googleapis.com` |
+| Mistral        | `/mistral`       | `https://api.mistral.ai`             |
+| Cohere         | `/cohere`        | `https://api.cohere.com`             |
+| Perplexity     | `/perplexity`    | `https://api.perplexity.ai`          |
+| DeepSeek       | `/deepseek`      | `https://api.deepseek.com`           |
+| Alibaba Qwen   | `/alibaba`       | `https://dashscope.aliyuncs.com`      |
+| Zhipu / GLM    | `/zhipu`         | `https://open.bigmodel.cn`           |
+| ZAI / GLM      | `/zai`           | `https://api.z.ai/api/coding/paas/v4` |
+| Moonshot       | `/moonshot`      | `https://api.moonshot.cn`            |
+| Baichuan       | `/baichuan`      | `https://api.baichuan-ai.com`        |
+| Yi / 01.AI     | `/yi`            | `https://api.lingyiwanwu.com`        |
+| Minimax        | `/minimax`       | `https://api.minimax.chat`           |
+| Stepfun        | `/stepfun`      | `https://api.stepfun.com`            |
+| SiliconFlow    | `/siliconflow`   | `https://api.siliconflow.cn`         |
+| Groq           | `/groq`          | `https://api.groq.com`               |
+| Together       | `/together`      | `https://api.together.xyz`           |
+| Fireworks      | `/fireworks`     | `https://api.fireworks.ai`           |
+| Anyscale       | `/anyscale`      | `https://api.endpoints.anyscale.com`  |
+| Replicate      | `/replicate`     | `https://api.replicate.com`          |
+| Lepton         | `/lepton`        | `https://api.lepton.ai`              |
+| Cerebras       | `/cerebras`      | `https://api.cerebras.ai`            |
+| SambaNova      | `/sambanova`     | `https://api.sambanova.ai`           |
+| Azure OpenAI   | `/azure`         | `https://YOUR_RESOURCE.openai.azure.com` |
+| AWS Bedrock    | `/bedrock`      | `https://bedrock-runtime.us-east-1.amazonaws.com` |
+| OpenRouter     | `/openrouter`    | `https://openrouter.ai/api`           |
+| xAI / Grok     | `/xai`           | `https://api.x.ai`                   |
 
-Registers `mirage-anthropic` as a provider. Switch to a miraged model with `/model mirage-sonnet` (or `mirage-haiku`, `mirage-opus`). All traffic through that session is filtered — no wrapper needed.
-
----
-
-## Verification
-
-```bash
-mirage status   # daemon running? filter active?
-mirage logs     # live tail of redactions
-```
+List all providers: `mirage-proxy --list-providers`
 
 ---
 
@@ -151,31 +158,6 @@ Every fake matches the **format and length** of the original. An AWS key becomes
 
 ---
 
-## Trust & privacy
-
-- **No telemetry.** No external reporting pipeline. No analytics.
-- **Local only.** Mirage proxies only to your configured upstream provider endpoints.
-- **Auditable.** Audit logging writes to a local file. `log_values: false` by default.
-- **Dry-run mode.** Log what would be filtered without modifying traffic: `mirage-proxy --dry-run`
-- **Encrypted vault.** Persist fake↔original mappings across restarts with AES-256-GCM + Argon2id key derivation: `MIRAGE_VAULT_KEY="passphrase" mirage-proxy --setup`
-
----
-
-## Comparison
-
-| | mirage-proxy | PasteGuard | LLM Guard | LiteLLM+Presidio |
-|---|---|---|---|---|
-| **Install** | `brew install` | Docker + npm | pip + models | pip + Docker + spaCy |
-| **Size** | ~5MB | ~500MB+ | ~2GB+ | ~500MB+ |
-| **Overhead** | <1ms | 10–50ms | 50–200ms | 10–50ms |
-| **Replacement method** | Plausible fakes | `[[PERSON_1]]` | `[REDACTED]` | `<PERSON>` |
-| **LLM knows data was removed?** | No | Yes | Yes | Yes |
-| **Session-consistent fakes** | ✓ | ✗ | ✗ | ✗ |
-| **Streaming (SSE)** | ✓ | ✓ | ✗ | Partial |
-| **Encrypted vault** | ✓ | ✗ | ✗ | ✗ |
-
----
-
 ## Configuration
 
 Zero config needed. For fine-tuning, create `~/.config/mirage/mirage.yaml`:
@@ -195,6 +177,13 @@ audit:
   enabled: true
   path: "./mirage-audit.jsonl"
   log_values: false
+
+vault:
+  path: "./mirage-vault.enc"   # encrypted fake↔original mappings
+
+update_check:
+  enabled: true
+  timeout_ms: 1200
 ```
 
 | Sensitivity | What gets filtered |
@@ -203,6 +192,59 @@ audit:
 | `medium` | Secrets + PII (email, phone) — **default** |
 | `high` | Everything including warn-only |
 | `paranoid` | All detected patterns |
+
+---
+
+## CLI Reference
+
+```
+mirage-proxy [OPTIONS]
+
+  -p, --port <PORT>           Listen port [default: 8686]
+  -b, --bind <ADDR>           Bind address [default: 127.0.0.1]
+  -c, --config <PATH>         Config file path
+      --sensitivity <LEVEL>   low | medium | high | paranoid
+      --dry-run               Log detections without modifying traffic
+      --vault-key <PHRASE>    Vault passphrase (or MIRAGE_VAULT_KEY env)
+      --vault-path <PATH>     Vault file path
+      --vault-flush-threshold <N>  Flush after N mappings [default: 50]
+      --list-providers        Show all built-in provider routes
+      --no-update-check       Skip version check on startup
+      --log-level <LEVEL>     trace | debug | info | warn | error [default: info]
+  -h, --help
+  -V, --version
+```
+
+### Subcommands
+
+```
+mirage-proxy audit            Interactive TUI viewer for the audit log
+  -p, --path <PATH>           Audit log file path
+  -c, --config <PATH>         Config file (to load default audit path)
+
+mirage-proxy vault            Interactive TUI viewer for vault mappings
+      --vault-key <PHRASE>    Vault passphrase (or MIRAGE_VAULT_KEY env)
+      --vault-path <PATH>     Vault file path
+  -c, --config <PATH>         Config file (to load default vault path)
+```
+
+### Health check
+
+```
+curl http://127.0.0.1:8686/healthz
+```
+
+Returns JSON with request count, redaction count, and session count.
+
+---
+
+## Trust & privacy
+
+- **No telemetry.** No external reporting pipeline. No analytics.
+- **Local only.** Mirage proxies only to your configured upstream provider endpoints.
+- **Auditable.** Audit logging writes to a local file. `log_values: false` by default.
+- **Dry-run mode.** Log what would be filtered without modifying traffic: `mirage-proxy --dry-run`
+- **Encrypted vault.** Persist fake↔original mappings across restarts with AES-256-GCM + Argon2id key derivation: `MIRAGE_VAULT_KEY="passphrase" mirage-proxy`
 
 ---
 
@@ -215,64 +257,8 @@ audit:
 
 ---
 
-## CLI reference
-
-```
-mirage-proxy [OPTIONS]
-
-  --setup                     Install wrappers + daemon (recommended)
-  --uninstall                 Remove everything: wrappers + daemon
-  --wrapper-install           Install wrappers only
-  --wrapper-uninstall         Remove wrappers only
-  --service-install           Install daemon only + shell integration
-  --service-uninstall         Remove daemon + shell integration
-  --service-status            Show daemon status
-  -p, --port <PORT>           Listen port [default: 8686]
-  -b, --bind <ADDR>           Bind address [default: 127.0.0.1]
-  -c, --config <PATH>         Config file path
-      --sensitivity <LEVEL>   low | medium | high | paranoid
-      --dry-run               Log detections without modifying traffic
-      --vault-key <PHRASE>    Vault passphrase (or MIRAGE_VAULT_KEY env)
-      --list-providers        Show all 28+ built-in provider routes
-      --yes                   Skip interactive confirmation prompts
-      --no-update-check       Skip version check on startup
-  -h, --help
-  -V, --version
-```
-
-Day-to-day shell commands (available after `--service-install`):
-
-```bash
-mirage status   # daemon running? filter on?
-mirage logs     # live tail of detections
-mirage on       # route this terminal through mirage
-mirage off      # this terminal goes direct (daemon keeps running)
-```
-
----
-
-## Roadmap
-
-- [x] 129 secret patterns (Gitleaks + secrets-patterns-db)
-- [x] Plausible fake substitution with session consistency
-- [x] Encrypted vault (AES-256-GCM, Argon2id)
-- [x] SSE streaming with cross-chunk boundary buffer
-- [x] Multi-provider routing (28+ providers)
-- [x] macOS (launchd), Linux (systemd), Windows (Task Scheduler)
-- [x] Native OpenClaw integration (ClawdHub skill)
-- [x] Provider bypass list
-- [x] `--setup`: unified installer (wrappers + daemon in one step)
-- [ ] Signed release artifacts + provenance attestation
-- [ ] Custom pattern definitions in config
-- [ ] Optional ONNX NER for name/organization detection
-- [ ] Route mode: send sensitive requests to a local model instead
-
----
-
 ## License
 
 MIT
 
-Built by [@chandika](https://x.com/chandika). Born from watching coding agents send API keys to the cloud.
-
-Detection patterns from [Gitleaks](https://github.com/gitleaks/gitleaks) (MIT) and [secrets-patterns-db](https://github.com/mazen160/secrets-patterns-db) (Apache 2.0).
+Forked from [@chandika/mirage-proxy](https://github.com/chandika/mirage-proxy). Detection patterns from [Gitleaks](https://github.com/gitleaks/gitleaks) (MIT) and [secrets-patterns-db](https://github.com/mazen160/secrets-patterns-db) (Apache 2.0).

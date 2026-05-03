@@ -1,5 +1,5 @@
 {
-  description = "Rust development template";
+  description = "LLM proxy that replaces secrets and PII with plausible fakes before they reach cloud providers";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";

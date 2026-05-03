@@ -80,6 +80,14 @@ pub struct AuditConfig {
     pub path: PathBuf,
     #[serde(default)]
     pub log_values: bool,
+    #[serde(default)]
+    pub encrypted: bool,
+    #[serde(default = "default_audit_max_size_mb")]
+    pub max_size_mb: u64,
+    #[serde(default = "default_audit_rotate_keep")]
+    pub rotate_keep: usize,
+    #[serde(default = "default_audit_max_age_days")]
+    pub max_age_days: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -105,6 +113,10 @@ impl Default for AuditConfig {
             enabled: true,
             path: default_audit_path(),
             log_values: false,
+            encrypted: false,
+            max_size_mb: default_audit_max_size_mb(),
+            rotate_keep: default_audit_rotate_keep(),
+            max_age_days: default_audit_max_age_days(),
         }
     }
 }
@@ -158,6 +170,17 @@ fn default_vault_path() -> PathBuf {
     PathBuf::from("./mirage-vault.enc")
 }
 
+fn default_audit_max_size_mb() -> u64 {
+    100
+}
+
+fn default_audit_rotate_keep() -> usize {
+    5
+}
+
+fn default_audit_max_age_days() -> u64 {
+    30
+}
 fn default_always_redact() -> Vec<String> {
     vec![
         "SSN".into(),
@@ -243,7 +266,9 @@ impl Config {
     }
 
     pub fn is_excluded_value(&self, value: &str) -> bool {
-        self.exclusion_value_patterns.iter().any(|re| re.is_match(value))
+        self.exclusion_value_patterns
+            .iter()
+            .any(|re| re.is_match(value))
     }
 
     /// Check if a PII kind should be redacted given current sensitivity

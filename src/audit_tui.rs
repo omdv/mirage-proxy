@@ -1,4 +1,4 @@
-use crate::audit::AuditEntry;
+use crate::audit::{AuditEntry, AuditLog, AUDIT_KEY_LEN};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -6,10 +6,10 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Wrap},
     Frame, Terminal,
 };
 use std::fs::File;
@@ -20,41 +20,50 @@ pub struct AuditViewer {
     entries: Vec<AuditEntry>,
     filtered_indices: Vec<usize>,
     table_state: TableState,
-    scroll_offset: usize,
-    filter_action: Option<String>,
-    filter_kind: Option<String>,
     search_query: String,
     input_mode: InputMode,
     status_message: String,
+    detail_scroll: u16,
+    filter_mode: FilterMode,
 }
 
 #[derive(PartialEq)]
 enum InputMode {
     Normal,
     Search,
-    FilterAction,
-    FilterKind,
 }
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum FilterMode {
+    All,
+    ReplacedOnly,
+}
 impl AuditViewer {
-    pub fn new(audit_path: PathBuf) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let entries = Self::load_entries(&audit_path)?;
+    pub fn new(
+        audit_path: PathBuf,
+        decrypt_key: Option<[u8; AUDIT_KEY_LEN]>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let entries = Self::load_entries(&audit_path, decrypt_key.as_ref())?;
         let filtered_indices = (0..entries.len()).collect();
-        
-        Ok(Self {
+
+        let mut viewer = Self {
             entries,
             filtered_indices,
             table_state: TableState::default(),
-            scroll_offset: 0,
-            filter_action: None,
-            filter_kind: None,
             search_query: String::new(),
             input_mode: InputMode::Normal,
-            status_message: "Press 'q' to quit, '/' to search, 'a' to filter by action, 'k' to filter by kind, 'c' to clear filters".to_string(),
-        })
+            status_message: "Press q quit, / search, j/k navigate, f filter".to_string(),
+            detail_scroll: 0,
+            filter_mode: FilterMode::All,
+        };
+        viewer.apply_filters();
+        Ok(viewer)
     }
 
-    fn load_entries(path: &PathBuf) -> Result<Vec<AuditEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    fn load_entries(
+        path: &PathBuf,
+        decrypt_key: Option<&[u8; AUDIT_KEY_LEN]>,
+    ) -> Result<Vec<AuditEntry>, Box<dyn std::error::Error + Send + Sync>> {
         if !path.exists() {
             return Ok(Vec::new());
         }
@@ -65,7 +74,25 @@ impl AuditViewer {
 
         for line in reader.lines() {
             let line = line?;
-            if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line) {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            let json_line = if AuditLog::is_encrypted_line(line) {
+                if let Some(key) = decrypt_key {
+                    match AuditLog::decrypt_audit_line(line, key) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                line.to_string()
+            };
+
+            if let Ok(entry) = serde_json::from_str::<AuditEntry>(&json_line) {
                 entries.push(entry);
             }
         }
@@ -74,48 +101,38 @@ impl AuditViewer {
     }
 
     fn apply_filters(&mut self) {
+        let q = self.search_query.to_lowercase();
         self.filtered_indices = self
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, entry)| {
-                let action_match = self
-                    .filter_action
-                    .as_ref()
-                    .map(|f| entry.action.to_lowercase().contains(&f.to_lowercase()))
-                    .unwrap_or(true);
-
-                let kind_match = self
-                    .filter_kind
-                    .as_ref()
-                    .map(|f| entry.kind.to_lowercase().contains(&f.to_lowercase()))
-                    .unwrap_or(true);
-
-                let search_match = if self.search_query.is_empty() {
-                    true
-                } else {
-                    let query = self.search_query.to_lowercase();
-                    entry.kind.to_lowercase().contains(&query)
-                        || entry.action.to_lowercase().contains(&query)
-                        || entry.context_snippet.to_lowercase().contains(&query)
-                        || entry
-                            .original
-                            .as_ref()
-                            .map(|o| o.to_lowercase().contains(&query))
-                            .unwrap_or(false)
-                };
-
-                action_match && kind_match && search_match
+            .filter(|(_, e)| {
+                if self.filter_mode == FilterMode::ReplacedOnly && !e.has_replacements {
+                    return false;
+                }
+                if q.is_empty() {
+                    return true;
+                }
+                e.local_url.to_lowercase().contains(&q)
+                    || e.remote_url.to_lowercase().contains(&q)
+                    || e.model
+                        .as_ref()
+                        .map(|v| v.to_lowercase().contains(&q))
+                        .unwrap_or(false)
+                    || e.replacements.iter().any(|r| {
+                        r.original.to_lowercase().contains(&q)
+                            || r.replaced.to_lowercase().contains(&q)
+                    })
             })
-            .map(|(idx, _)| idx)
+            .map(|(i, _)| i)
             .collect();
 
-        self.scroll_offset = 0;
         self.table_state.select(if self.filtered_indices.is_empty() {
             None
         } else {
             Some(0)
         });
+        self.detail_scroll = 0;
     }
 
     fn next(&mut self) {
@@ -123,16 +140,11 @@ impl AuditViewer {
             return;
         }
         let i = match self.table_state.selected() {
-            Some(i) => {
-                if i >= self.filtered_indices.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
+            Some(i) if i < self.filtered_indices.len() - 1 => i + 1,
+            _ => 0,
         };
         self.table_state.select(Some(i));
+        self.detail_scroll = 0;
     }
 
     fn previous(&mut self) {
@@ -140,111 +152,125 @@ impl AuditViewer {
             return;
         }
         let i = match self.table_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.filtered_indices.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
+            Some(0) | None => self.filtered_indices.len() - 1,
+            Some(i) => i - 1,
         };
         self.table_state.select(Some(i));
+        self.detail_scroll = 0;
     }
 
-    fn render_table(&mut self, f: &mut Frame, area: Rect) {
-        let header_cells = ["Time", "Kind", "Action", "Confidence", "Context"]
-            .iter()
-            .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
-        let header = Row::new(header_cells).height(1).bottom_margin(1);
+    fn toggle_filter_mode(&mut self) {
+        self.filter_mode = match self.filter_mode {
+            FilterMode::All => FilterMode::ReplacedOnly,
+            FilterMode::ReplacedOnly => FilterMode::All,
+        };
+        let label = match self.filter_mode {
+            FilterMode::All => "ALL",
+            FilterMode::ReplacedOnly => "REPLACED only",
+        };
+        self.status_message = format!("Filter: {}", label);
+        self.apply_filters();
+    }
+
+    fn render_table(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
+        let header = Row::new(["Time", "Local URL", "Remote URL", "Model", "Replacements"]).style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
 
         let rows = self.filtered_indices.iter().map(|&idx| {
-            let entry = &self.entries[idx];
-            let time = entry.timestamp.split('T').nth(1).unwrap_or(&entry.timestamp);
-            let time = time.split('.').next().unwrap_or(time);
-            
-            let action_color = match entry.action.as_str() {
-                "redacted" => Color::Red,
-                "masked" => Color::Yellow,
-                "warned" => Color::Magenta,
-                _ => Color::Gray,
-            };
-
-            let cells = vec![
+            let e = &self.entries[idx];
+            let time = e
+                .timestamp
+                .split('T')
+                .nth(1)
+                .unwrap_or(&e.timestamp)
+                .split('.')
+                .next()
+                .unwrap_or(&e.timestamp)
+                .to_string();
+            Row::new(vec![
                 Cell::from(time),
-                Cell::from(entry.kind.as_str()),
-                Cell::from(entry.action.as_str()).style(Style::default().fg(action_color)),
-                Cell::from(format!("{:.2}", entry.confidence)),
-                Cell::from(entry.context_snippet.as_str()),
-            ];
-            Row::new(cells).height(1)
+                Cell::from(e.local_url.clone()),
+                Cell::from(e.remote_url.clone()),
+                Cell::from(e.model.clone().unwrap_or_else(|| "-".to_string())),
+                Cell::from(if e.has_replacements { "YES" } else { "NO" }),
+            ])
         });
 
         let table = Table::new(
             rows,
             [
                 Constraint::Length(10),
-                Constraint::Length(20),
-                Constraint::Length(10),
-                Constraint::Length(10),
-                Constraint::Min(30),
+                Constraint::Percentage(30),
+                Constraint::Percentage(30),
+                Constraint::Percentage(20),
+                Constraint::Length(12),
             ],
         )
         .header(header)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" Audit Log ({} entries) ", self.filtered_indices.len()))
+                .title(format!(" Calls ({}) ", self.filtered_indices.len())),
         )
-        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+        .highlight_style(Style::default().bg(Color::DarkGray))
         .highlight_symbol("→ ");
 
         f.render_stateful_widget(table, area, &mut self.table_state);
     }
 
-    fn render_detail(&self, f: &mut Frame, area: Rect) {
-        let detail_text = if let Some(selected) = self.table_state.selected() {
+    fn render_detail(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
+        let detail = if let Some(selected) = self.table_state.selected() {
             if let Some(&idx) = self.filtered_indices.get(selected) {
-                let entry = &self.entries[idx];
-                let mut lines = vec![
-                    Line::from(vec![
-                        Span::styled("Timestamp: ", Style::default().fg(Color::Cyan)),
-                        Span::raw(&entry.timestamp),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("Kind: ", Style::default().fg(Color::Cyan)),
-                        Span::raw(&entry.kind),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("Action: ", Style::default().fg(Color::Cyan)),
-                        Span::raw(&entry.action),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("Confidence: ", Style::default().fg(Color::Cyan)),
-                        Span::raw(format!("{:.2}", entry.confidence)),
-                    ]),
-                ];
-
-                if let Some(ref hash) = entry.value_hash {
-                    lines.push(Line::from(vec![
-                        Span::styled("Value Hash: ", Style::default().fg(Color::Cyan)),
-                        Span::raw(hash),
-                    ]));
+                let e = &self.entries[idx];
+                if e.replacements.is_empty() {
+                    Paragraph::new(vec![
+                        Line::from(vec![
+                            Span::styled("Local: ", Style::default().fg(Color::Cyan)),
+                            Span::raw(&e.local_url),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("Remote: ", Style::default().fg(Color::Cyan)),
+                            Span::raw(&e.remote_url),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("Model: ", Style::default().fg(Color::Cyan)),
+                            Span::raw(e.model.as_deref().unwrap_or("-")),
+                        ]),
+                        Line::from(""),
+                        Line::from("No replacements for this call"),
+                    ])
+                } else {
+                    let mut lines = vec![
+                        Line::from(vec![
+                            Span::styled("Local: ", Style::default().fg(Color::Cyan)),
+                            Span::raw(&e.local_url),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("Remote: ", Style::default().fg(Color::Cyan)),
+                            Span::raw(&e.remote_url),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("Model: ", Style::default().fg(Color::Cyan)),
+                            Span::raw(e.model.as_deref().unwrap_or("-")),
+                        ]),
+                        Line::from(""),
+                        Line::from(format!("{:<48} | {}", "ORIGINAL", "REPLACED")),
+                        Line::from(format!("{:-<48}-+-{:-<48}", "", "")),
+                    ];
+                    for r in &e.replacements {
+                        lines.push(Line::from(format!(
+                            "{:<48} | {}",
+                            r.original,
+                            r.replaced
+                        )));
+                    }
+                    Paragraph::new(lines)
                 }
-
-                if let Some(ref original) = entry.original {
-                    lines.push(Line::from(vec![
-                        Span::styled("Original: ", Style::default().fg(Color::Cyan)),
-                        Span::raw(original),
-                    ]));
-                }
-
-                lines.push(Line::from(vec![
-                    Span::styled("Context: ", Style::default().fg(Color::Cyan)),
-                    Span::raw(&entry.context_snippet),
-                ]));
-
-                Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((self.detail_scroll, 0))
             } else {
                 Paragraph::new("No entry selected")
             }
@@ -253,20 +279,18 @@ impl AuditViewer {
         };
 
         f.render_widget(
-            detail_text.block(Block::default().borders(Borders::ALL).title(" Details ")),
+            detail.block(Block::default().borders(Borders::ALL).title(" Details ")),
             area,
         );
     }
 
-    fn render_input(&self, f: &mut Frame, area: Rect) {
+    fn render_input(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         let (title, content) = match self.input_mode {
-            InputMode::Search => (" Search ", &self.search_query),
-            InputMode::FilterAction => (" Filter by Action ", &self.search_query),
-            InputMode::FilterKind => (" Filter by Kind ", &self.search_query),
-            InputMode::Normal => (" Status ", &self.status_message),
+            InputMode::Search => (" Search ", self.search_query.as_str()),
+            InputMode::Normal => (" Status ", self.status_message.as_str()),
         };
 
-        let input = Paragraph::new(content.as_str())
+        let input = Paragraph::new(content)
             .style(Style::default().fg(if self.input_mode == InputMode::Normal {
                 Color::White
             } else {
@@ -318,55 +342,18 @@ impl AuditViewer {
                             self.input_mode = InputMode::Search;
                             self.search_query.clear();
                         }
-                        KeyCode::Char('a') => {
-                            self.input_mode = InputMode::FilterAction;
-                            self.search_query.clear();
-                        }
-                        KeyCode::Char('t') => {
-                            self.input_mode = InputMode::FilterKind;
-                            self.search_query.clear();
-                        }
-                        KeyCode::Char('c') => {
-                            self.filter_action = None;
-                            self.filter_kind = None;
-                            self.search_query.clear();
-                            self.apply_filters();
-                            self.status_message = "Filters cleared".to_string();
-                        }
+                        KeyCode::PageDown => self.detail_scroll = self.detail_scroll.saturating_add(5),
+                        KeyCode::PageUp => self.detail_scroll = self.detail_scroll.saturating_sub(5),
+                        KeyCode::Char('f') => self.toggle_filter_mode(),
                         _ => {}
                     },
-                    _ => match key.code {
+                    InputMode::Search => match key.code {
                         KeyCode::Enter => {
-                            match self.input_mode {
-                                InputMode::Search => {
-                                    self.apply_filters();
-                                    self.status_message = format!("Searching for: {}", self.search_query);
-                                }
-                                InputMode::FilterAction => {
-                                    self.filter_action = if self.search_query.is_empty() {
-                                        None
-                                    } else {
-                                        Some(self.search_query.clone())
-                                    };
-                                    self.apply_filters();
-                                    self.status_message = format!("Filter action: {:?}", self.filter_action);
-                                }
-                                InputMode::FilterKind => {
-                                    self.filter_kind = if self.search_query.is_empty() {
-                                        None
-                                    } else {
-                                        Some(self.search_query.clone())
-                                    };
-                                    self.apply_filters();
-                                    self.status_message = format!("Filter kind: {:?}", self.filter_kind);
-                                }
-                                _ => {}
-                            }
+                            self.apply_filters();
+                            self.status_message = format!("Searching for: {}", self.search_query);
                             self.input_mode = InputMode::Normal;
                         }
-                        KeyCode::Char(c) => {
-                            self.search_query.push(c);
-                        }
+                        KeyCode::Char(c) => self.search_query.push(c),
                         KeyCode::Backspace => {
                             self.search_query.pop();
                         }
@@ -385,9 +372,9 @@ impl AuditViewer {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(10),
-                Constraint::Length(10),
-                Constraint::Length(3),
+                Constraint::Percentage(35),
+                Constraint::Percentage(60),
+                Constraint::Percentage(5),
             ])
             .split(f.size());
 

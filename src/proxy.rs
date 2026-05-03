@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, warn};
 
-use crate::audit::AuditLog;
+use crate::audit::{AuditLog, ReplacementRecord};
 use crate::config::{Config, RedactAction};
 use crate::faker::Faker;
 use crate::redactor::detect;
@@ -104,6 +104,7 @@ async fn forward_request(
     body: Vec<u8>,
     state: Arc<ProxyState>,
     faker: Arc<Faker>,
+    local_url: String,
 ) -> Result<Response<BoxBody>, hyper::Error> {
     let is_chatgpt = headers.contains_key("chatgpt-account-id");
     let (target_url, _) = if let Some((upstream, remaining)) = crate::providers::resolve_provider(path, is_chatgpt) {
@@ -135,6 +136,10 @@ async fn forward_request(
     forward = forward.header("accept-encoding", "identity");
     forward = forward.body(body);
 
+    if let Some(ref audit) = state.audit_log {
+        audit.log_call(&local_url, &target_url, None, None, Vec::new());
+    }
+
     let response = match forward.send().await {
         Ok(resp) => resp,
         Err(e) => {
@@ -154,9 +159,25 @@ async fn forward_request(
         .unwrap_or(false);
 
     if is_stream {
-        handle_streaming_response(status, resp_headers, response, state, faker).await
+        handle_streaming_response(
+            status,
+            resp_headers,
+            response,
+            state,
+            faker,
+            "fast-forward".to_string(),
+        )
+        .await
     } else {
-        handle_regular_response(status, resp_headers, response, state, faker).await
+        handle_regular_response(
+            status,
+            resp_headers,
+            response,
+            state,
+            faker,
+            "fast-forward".to_string(),
+        )
+        .await
     }
 }
 
@@ -169,6 +190,7 @@ pub async fn handle_request(
     let path = req.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/").to_string();
     let headers = req.headers().clone();
 
+    let request_id = uuid::Uuid::new_v4().to_string();
     if path == "/healthz" {
         return Ok(health_response(&state));
     }
@@ -207,6 +229,12 @@ pub async fn handle_request(
         .unwrap_or("")
         .to_ascii_lowercase();
 
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost:8687");
+    let local_url = format!("http://{}{}", host, path);
+
     // Never inspect binary request payloads (multipart, images, PDFs, etc).
     // Forward as-is to avoid corruption.
     if !body_bytes.is_empty() && !request_content_type.is_empty() && !is_textual_content_type(&request_content_type) {
@@ -215,8 +243,9 @@ pub async fn handle_request(
             request_content_type
         );
         let (_, faker) = state.sessions.get_faker("default");
-        return forward_request(method, &path, &headers, body_bytes.to_vec(), state, faker).await;
+        return forward_request(method, &path, &headers, body_bytes.to_vec(), state, faker, local_url).await;
     }
+
 
     // Check if this provider is bypassed (no redaction/rehydration)
     let is_chatgpt_early = headers.contains_key("chatgpt-account-id");
@@ -226,8 +255,9 @@ pub async fn handle_request(
     if state.config.is_bypassed(&resolved_upstream) {
         debug!("⏩ bypassing {} (matched bypass list)", resolved_upstream);
         let (_, faker) = state.sessions.get_faker("default");
-        return forward_request(method, &path, &headers, body_bytes.to_vec(), state, faker).await;
+        return forward_request(method, &path, &headers, body_bytes.to_vec(), state, faker, local_url).await;
     }
+
 
     // Check for compressed body (zstd, gzip, etc.) — decompress for inspection, forward original
     let content_encoding = headers.get("content-encoding")
@@ -248,19 +278,36 @@ pub async fn handle_request(
                 // Can't inspect, just forward original
                 let (_, faker) = state.sessions.get_faker("default");
                 // Skip to forwarding
-                return forward_request(method, &path, &headers, body_bytes.to_vec(), state, faker).await;
+                return forward_request(
+                    method,
+                    &path,
+                    &headers,
+                    body_bytes.to_vec(),
+                    state,
+                    faker,
+                    local_url,
+                )
+                .await;
             }
         }
     } else {
         body_bytes.to_vec()
     };
 
+    let mut audit_session_id: Option<String> = None;
+    let mut audit_model: Option<String> = None;
+    let mut audit_replacements: Vec<ReplacementRecord> = Vec::new();
     // Parse JSON to derive session ID, then redact with session-scoped faker
     let (redacted_body, session_faker) = if !inspect_bytes.is_empty() {
         match serde_json::from_slice::<Value>(&inspect_bytes) {
             Ok(mut json) => {
                 debug!("parsed JSON body OK ({} bytes)", inspect_bytes.len());
                 let session_id = SessionManager::derive_session_id(&json);
+                audit_session_id = Some(session_id.clone());
+                audit_model = json
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_string());
                 let (is_new, faker) = state.sessions.get_faker(&session_id);
                 if is_new {
                     state.stats.add_session();
@@ -268,14 +315,30 @@ pub async fn handle_request(
                 if is_new {
                     eprint!("\r\x1b[2K  📎 session: {}\n", session_id);
                 }
-                redact_json_value(&mut json, &state, &faker);
+                redact_json_value(
+                    &mut json,
+                    &state,
+                    &faker,
+                    audit_session_id.as_deref(),
+                    audit_model.as_deref(),
+                    &mut audit_replacements,
+                );
                 if is_compressed {
                     // Re-compress redacted JSON back to original encoding
-                    let redacted_json = serde_json::to_vec(&json).unwrap_or_else(|_| inspect_bytes.clone());
-                    debug!("re-compressing redacted body ({} bytes) with {}", redacted_json.len(), content_encoding);
+                    let redacted_json =
+                        serde_json::to_vec(&json).unwrap_or_else(|_| inspect_bytes.clone());
+                    debug!(
+                        "re-compressing redacted body ({} bytes) with {}",
+                        redacted_json.len(),
+                        content_encoding
+                    );
                     match compress_body(&redacted_json, &content_encoding) {
                         Ok(compressed) => {
-                            debug!("re-compressed: {} bytes → {} bytes", redacted_json.len(), compressed.len());
+                            debug!(
+                                "re-compressed: {} bytes → {} bytes",
+                                redacted_json.len(),
+                                compressed.len()
+                            );
                             (compressed, faker)
                         }
                         Err(e) => {
@@ -284,14 +347,28 @@ pub async fn handle_request(
                         }
                     }
                 } else {
-                    (serde_json::to_vec(&json).unwrap_or_else(|_| body_bytes.to_vec()), faker)
+                    (
+                        serde_json::to_vec(&json).unwrap_or_else(|_| body_bytes.to_vec()),
+                        faker,
+                    )
                 }
             }
             Err(e) => {
-                debug!("body is not valid JSON: {} — treating as text ({} bytes)", e, inspect_bytes.len());
+                debug!(
+                    "body is not valid JSON: {} — treating as text ({} bytes)",
+                    e,
+                    inspect_bytes.len()
+                );
                 let (_, faker) = state.sessions.get_faker("default");
                 let text = String::from_utf8_lossy(&inspect_bytes);
-                let redacted = smart_redact(&text, &state, &faker);
+                let redacted = smart_redact(
+                    &text,
+                    &state,
+                    &faker,
+                    audit_session_id.as_deref(),
+                    audit_model.as_deref(),
+                    &mut audit_replacements,
+                );
                 if is_compressed {
                     match compress_body(redacted.as_bytes(), &content_encoding) {
                         Ok(compressed) => (compressed, faker),
@@ -312,6 +389,8 @@ pub async fn handle_request(
     } else {
         redacted_body
     };
+
+
 
     // Resolve provider
     let is_chatgpt = headers.contains_key("chatgpt-account-id");
@@ -365,6 +444,15 @@ pub async fn handle_request(
 
     forward = forward.body(forward_body);
 
+    if let Some(ref audit) = state.audit_log {
+        audit.log_call(
+            &local_url,
+            &target_url,
+            audit_session_id.as_deref(),
+            audit_model.as_deref(),
+            audit_replacements,
+        );
+    }
     let response = match forward.send().await {
         Ok(resp) => resp,
         Err(e) => {
@@ -396,9 +484,9 @@ pub async fn handle_request(
         .unwrap_or(false);
 
     if is_stream {
-        handle_streaming_response(status, resp_headers, response, state, session_faker).await
+        handle_streaming_response(status, resp_headers, response, state, session_faker, request_id).await
     } else {
-        handle_regular_response(status, resp_headers, response, state, session_faker).await
+        handle_regular_response(status, resp_headers, response, state, session_faker, request_id).await
     }
 }
 
@@ -512,6 +600,7 @@ async fn handle_regular_response(
     response: reqwest::Response,
     state: Arc<ProxyState>,
     faker: Arc<Faker>,
+    _request_id: String,
 ) -> Result<Response<BoxBody>, hyper::Error> {
     let body_bytes = response.bytes().await.unwrap_or_default();
 
@@ -574,7 +663,9 @@ async fn handle_regular_response(
         body_bytes.to_vec()
     };
 
+
     let mut builder = Response::builder().status(StatusCode::from_u16(status.as_u16()).unwrap());
+
     for (name, value) in resp_headers.iter() {
         let name_str = name.as_str().to_lowercase();
         if name_str == "content-length" || name_str == "transfer-encoding" {
@@ -598,13 +689,16 @@ async fn handle_streaming_response(
     response: reqwest::Response,
     state: Arc<ProxyState>,
     faker: Arc<Faker>,
+    _request_id: String,
 ) -> Result<Response<BoxBody>, hyper::Error> {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, hyper::Error>>(32);
 
     let content_encoding = header_content_encoding(&resp_headers);
     let stream_is_compressed = !content_encoding.is_empty() && content_encoding != "identity";
 
+
     let stats_clone = state.stats.clone();
+
     tokio::spawn(async move {
         let mut stream = response.bytes_stream();
         // Buffer to handle fake values split across chunk boundaries.
@@ -707,7 +801,14 @@ async fn handle_streaming_response(
 
 /// Smart redaction: uses config to decide action per PII kind.
 /// Only counts and logs *new* detections — values already seen in this session are silently handled.
-fn smart_redact(text: &str, state: &ProxyState, faker: &Faker) -> String {
+fn smart_redact(
+    text: &str,
+    state: &ProxyState,
+    faker: &Faker,
+    _audit_session_id: Option<&str>,
+    _audit_model: Option<&str>,
+    audit_replacements: &mut Vec<ReplacementRecord>,
+) -> String {
     if should_skip_redaction_for_payload(text) {
         return text.to_string();
     }
@@ -728,19 +829,17 @@ fn smart_redact(text: &str, state: &ProxyState, faker: &Faker) -> String {
             seen.insert(entity.original.clone())  // returns true if newly inserted
         };
 
-        // Only audit-log and count genuinely new detections
-        if is_new {
-            if let Some(ref audit) = state.audit_log {
-                audit.log(label, &action, &entity.original, text);
-            }
-        }
-
+        // Only count genuinely new detections
+        if is_new {}
         match action {
             RedactAction::Redact => {
                 let token = faker.redact_token(&entity.original, &entity.kind);
+                audit_replacements.push(ReplacementRecord {
+                    original: entity.original.clone(),
+                    replaced: token.clone(),
+                });
                 result = result.replace(&entity.original, &token);
                 if is_new {
-                    // Print above status bar: clear line, print, newline
                     let preview = truncate_preview(&entity.original, 40);
                     let detail = if let Some(ref name) = entity.pattern_name {
                         format!("{} ({})", label, name)
@@ -754,9 +853,12 @@ fn smart_redact(text: &str, state: &ProxyState, faker: &Faker) -> String {
             }
             RedactAction::Mask => {
                 let fake = faker.fake(&entity.original, &entity.kind);
+                audit_replacements.push(ReplacementRecord {
+                    original: entity.original.clone(),
+                    replaced: fake.clone(),
+                });
                 result = result.replace(&entity.original, &fake);
                 if is_new {
-                    // Print above status bar: clear line, print, newline
                     let preview = truncate_preview(&entity.original, 40);
                     let detail = if let Some(ref name) = entity.pattern_name {
                         format!("{} ({})", label, name)
@@ -866,20 +968,39 @@ fn should_skip_key(key: &str) -> bool {
         || lower.starts_with("x-") || lower.starts_with("x_")
 }
 
-fn redact_json_value(value: &mut Value, state: &ProxyState, faker: &Faker) {
+fn redact_json_value(
+    value: &mut Value,
+    state: &ProxyState,
+    faker: &Faker,
+    audit_session_id: Option<&str>,
+    audit_model: Option<&str>,
+    audit_replacements: &mut Vec<ReplacementRecord>,
+) {
     match value {
         Value::String(s) => {
-            *s = smart_redact(s, state, faker);
+            *s = smart_redact(
+                s,
+                state,
+                faker,
+                audit_session_id,
+                audit_model,
+                audit_replacements,
+            );
         }
         Value::Array(arr) => {
             for item in arr {
-                redact_json_value(item, state, faker);
+                redact_json_value(
+                    item,
+                    state,
+                    faker,
+                    audit_session_id,
+                    audit_model,
+                    audit_replacements,
+                );
             }
         }
         Value::Object(obj) => {
             // Anthropic signed thinking blocks must never be modified.
-            // Shape example:
-            // {"type":"thinking","thinking":"...","signature":"base64..."}
             let is_signed_thinking = obj
                 .get("type")
                 .and_then(|v| v.as_str())
@@ -893,14 +1014,22 @@ fn redact_json_value(value: &mut Value, state: &ProxyState, faker: &Faker) {
 
             for (key, v) in obj.iter_mut() {
                 if should_skip_key(key) {
-                    continue; // Never redact auth/config fields
+                    continue;
                 }
-                redact_json_value(v, state, faker);
+                redact_json_value(
+                    v,
+                    state,
+                    faker,
+                    audit_session_id,
+                    audit_model,
+                    audit_replacements,
+                );
             }
         }
         _ => {}
     }
 }
+
 
 #[cfg(test)]
 mod tests {

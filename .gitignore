@@ -1,4 +1,6 @@
 /target
+.pi-lens/
+.dcp/
 *.swp
 *.swo
 .DS_Store

@@ -12,44 +12,160 @@ pub struct Provider {
 /// Clients set their base URL to http://localhost:8686/{prefix}
 pub static PROVIDERS: &[Provider] = &[
     // Major LLM providers
-    Provider { name: "Anthropic",       prefix: "/anthropic",    upstream: "https://api.anthropic.com" },
-    Provider { name: "OpenAI",          prefix: "/openai",       upstream: "https://api.openai.com" },
-    Provider { name: "OpenAI Codex",    prefix: "/codex",        upstream: "https://chatgpt.com/backend-api/codex" },
-    Provider { name: "Google AI",       prefix: "/google",       upstream: "https://generativelanguage.googleapis.com" },
-    Provider { name: "Google Vertex",   prefix: "/vertex",       upstream: "https://us-central1-aiplatform.googleapis.com" },
-    Provider { name: "Mistral",         prefix: "/mistral",      upstream: "https://api.mistral.ai" },
-    Provider { name: "Cohere",          prefix: "/cohere",       upstream: "https://api.cohere.com" },
-    Provider { name: "Perplexity",      prefix: "/perplexity",   upstream: "https://api.perplexity.ai" },
-
+    Provider {
+        name: "Anthropic",
+        prefix: "/anthropic",
+        upstream: "https://api.anthropic.com",
+    },
+    Provider {
+        name: "OpenAI",
+        prefix: "/openai",
+        upstream: "https://api.openai.com",
+    },
+    Provider {
+        name: "OpenAI Codex",
+        prefix: "/codex",
+        upstream: "https://chatgpt.com/backend-api/codex",
+    },
+    Provider {
+        name: "Google AI",
+        prefix: "/google",
+        upstream: "https://generativelanguage.googleapis.com",
+    },
+    Provider {
+        name: "Google Vertex",
+        prefix: "/vertex",
+        upstream: "https://us-central1-aiplatform.googleapis.com",
+    },
+    Provider {
+        name: "Mistral",
+        prefix: "/mistral",
+        upstream: "https://api.mistral.ai",
+    },
+    Provider {
+        name: "Cohere",
+        prefix: "/cohere",
+        upstream: "https://api.cohere.com",
+    },
+    Provider {
+        name: "Perplexity",
+        prefix: "/perplexity",
+        upstream: "https://api.perplexity.ai",
+    },
     // Chinese / Asian providers
-    Provider { name: "DeepSeek",        prefix: "/deepseek",     upstream: "https://api.deepseek.com" },
-    Provider { name: "Alibaba Qwen",    prefix: "/alibaba",      upstream: "https://dashscope.aliyuncs.com" },
-    Provider { name: "Zhipu / GLM",     prefix: "/zhipu",        upstream: "https://open.bigmodel.cn" },
-    Provider { name: "ZAI / GLM",       prefix: "/zai",          upstream: "https://api.z.ai/api/coding/paas/v4" },
-    Provider { name: "Moonshot / Kimi",  prefix: "/moonshot",    upstream: "https://api.moonshot.cn" },
-    Provider { name: "Baichuan",        prefix: "/baichuan",     upstream: "https://api.baichuan-ai.com" },
-    Provider { name: "Yi / 01.AI",      prefix: "/yi",           upstream: "https://api.lingyiwanwu.com" },
-    Provider { name: "Minimax",         prefix: "/minimax",      upstream: "https://api.minimax.chat" },
-    Provider { name: "Stepfun",         prefix: "/stepfun",      upstream: "https://api.stepfun.com" },
-    Provider { name: "SiliconFlow",     prefix: "/siliconflow",  upstream: "https://api.siliconflow.cn" },
-
+    Provider {
+        name: "DeepSeek",
+        prefix: "/deepseek",
+        upstream: "https://api.deepseek.com",
+    },
+    Provider {
+        name: "Alibaba Qwen",
+        prefix: "/alibaba",
+        upstream: "https://dashscope.aliyuncs.com",
+    },
+    Provider {
+        name: "Zhipu / GLM",
+        prefix: "/zhipu",
+        upstream: "https://open.bigmodel.cn",
+    },
+    Provider {
+        name: "ZAI / GLM",
+        prefix: "/zai",
+        upstream: "https://api.z.ai/api/coding/paas/v4",
+    },
+    Provider {
+        name: "Moonshot / Kimi",
+        prefix: "/moonshot",
+        upstream: "https://api.moonshot.cn",
+    },
+    Provider {
+        name: "Baichuan",
+        prefix: "/baichuan",
+        upstream: "https://api.baichuan-ai.com",
+    },
+    Provider {
+        name: "Yi / 01.AI",
+        prefix: "/yi",
+        upstream: "https://api.lingyiwanwu.com",
+    },
+    Provider {
+        name: "Minimax",
+        prefix: "/minimax",
+        upstream: "https://api.minimax.chat",
+    },
+    Provider {
+        name: "Stepfun",
+        prefix: "/stepfun",
+        upstream: "https://api.stepfun.com",
+    },
+    Provider {
+        name: "SiliconFlow",
+        prefix: "/siliconflow",
+        upstream: "https://api.siliconflow.cn",
+    },
     // Open / self-hosted compatible
-    Provider { name: "Groq",           prefix: "/groq",         upstream: "https://api.groq.com" },
-    Provider { name: "Together",       prefix: "/together",     upstream: "https://api.together.xyz" },
-    Provider { name: "Fireworks",      prefix: "/fireworks",    upstream: "https://api.fireworks.ai" },
-    Provider { name: "Anyscale",       prefix: "/anyscale",     upstream: "https://api.endpoints.anyscale.com" },
-    Provider { name: "Replicate",      prefix: "/replicate",    upstream: "https://api.replicate.com" },
-    Provider { name: "Lepton",         prefix: "/lepton",       upstream: "https://api.lepton.ai" },
-    Provider { name: "Cerebras",       prefix: "/cerebras",     upstream: "https://api.cerebras.ai" },
-    Provider { name: "SambaNova",      prefix: "/sambanova",    upstream: "https://api.sambanova.ai" },
-
+    Provider {
+        name: "Groq",
+        prefix: "/groq",
+        upstream: "https://api.groq.com",
+    },
+    Provider {
+        name: "Together",
+        prefix: "/together",
+        upstream: "https://api.together.xyz",
+    },
+    Provider {
+        name: "Fireworks",
+        prefix: "/fireworks",
+        upstream: "https://api.fireworks.ai",
+    },
+    Provider {
+        name: "Anyscale",
+        prefix: "/anyscale",
+        upstream: "https://api.endpoints.anyscale.com",
+    },
+    Provider {
+        name: "Replicate",
+        prefix: "/replicate",
+        upstream: "https://api.replicate.com",
+    },
+    Provider {
+        name: "Lepton",
+        prefix: "/lepton",
+        upstream: "https://api.lepton.ai",
+    },
+    Provider {
+        name: "Cerebras",
+        prefix: "/cerebras",
+        upstream: "https://api.cerebras.ai",
+    },
+    Provider {
+        name: "SambaNova",
+        prefix: "/sambanova",
+        upstream: "https://api.sambanova.ai",
+    },
     // Cloud provider AI
-    Provider { name: "Azure OpenAI",   prefix: "/azure",        upstream: "https://YOUR_RESOURCE.openai.azure.com" },
-    Provider { name: "AWS Bedrock",    prefix: "/bedrock",      upstream: "https://bedrock-runtime.us-east-1.amazonaws.com" },
-
+    Provider {
+        name: "Azure OpenAI",
+        prefix: "/azure",
+        upstream: "https://YOUR_RESOURCE.openai.azure.com",
+    },
+    Provider {
+        name: "AWS Bedrock",
+        prefix: "/bedrock",
+        upstream: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    },
     // AI coding / agent platforms
-    Provider { name: "OpenRouter",     prefix: "/openrouter",   upstream: "https://openrouter.ai" },
-    Provider { name: "xAI / Grok",     prefix: "/xai",          upstream: "https://api.x.ai" },
+    Provider {
+        name: "OpenRouter",
+        prefix: "/openrouter",
+        upstream: "https://openrouter.ai",
+    },
+    Provider {
+        name: "xAI / Grok",
+        prefix: "/xai",
+        upstream: "https://api.x.ai",
+    },
 ];
 
 /// Resolve a request path to (upstream_base_url, remaining_path).
@@ -61,6 +177,29 @@ pub static PROVIDERS: &[Provider] = &[
 /// indicating it uses ChatGPT account auth (e.g. Codex CLI with ChatGPT Plus).
 /// These requests go to chatgpt.com/backend-api/codex/* instead of api.openai.com.
 pub fn resolve_provider(path: &str, is_chatgpt_account: bool) -> Option<(&'static str, String)> {
+    // OpenRouter normalization:
+    // /openrouter/chat/completions      -> /api/v1/chat/completions
+    // /openrouter/v1/chat/completions   -> /api/v1/chat/completions
+    // /openrouter/api/v1/chat/completions -> /api/v1/chat/completions
+    if path.starts_with("/openrouter") {
+        let mut remaining = &path["/openrouter".len()..];
+        if remaining.is_empty() {
+            remaining = "/";
+        }
+
+        let normalized = if remaining == "/" {
+            "/api/v1".to_string()
+        } else if remaining == "/api/v1" || remaining.starts_with("/api/v1/") {
+            remaining.to_string()
+        } else if remaining == "/v1" || remaining.starts_with("/v1/") {
+            format!("/api{}", remaining)
+        } else {
+            format!("/api/v1{}", remaining)
+        };
+
+        return Some(("https://openrouter.ai", normalized));
+    }
+
     // Explicit prefix match
     for p in PROVIDERS {
         if path.starts_with(p.prefix) {
@@ -75,14 +214,15 @@ pub fn resolve_provider(path: &str, is_chatgpt_account: bool) -> Option<(&'stati
     if is_chatgpt_account {
         // /responses → /backend-api/codex/responses
         // /models → /backend-api/codex/models
-        if path.starts_with("/responses")
-            || path.starts_with("/models")
-        {
+        if path.starts_with("/responses") || path.starts_with("/models") {
             return Some(("https://chatgpt.com", format!("/backend-api/codex{}", path)));
         }
         // /v1/* → strip /v1 and route to /backend-api/codex/*
         if path.starts_with("/v1/") {
-            return Some(("https://chatgpt.com", format!("/backend-api/codex{}", &path[3..])));
+            return Some((
+                "https://chatgpt.com",
+                format!("/backend-api/codex{}", &path[3..]),
+            ));
         }
     }
 
@@ -104,4 +244,22 @@ pub fn resolve_provider(path: &str, is_chatgpt_account: bool) -> Option<(&'stati
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_provider;
+
+    #[test]
+    fn openrouter_path_normalization_variants() {
+        let (u1, p1) = resolve_provider("/openrouter/chat/completions", false).unwrap();
+        assert_eq!(u1, "https://openrouter.ai");
+        assert_eq!(p1, "/api/v1/chat/completions");
+
+        let (_, p2) = resolve_provider("/openrouter/v1/chat/completions", false).unwrap();
+        assert_eq!(p2, "/api/v1/chat/completions");
+
+        let (_, p3) = resolve_provider("/openrouter/api/v1/chat/completions", false).unwrap();
+        assert_eq!(p3, "/api/v1/chat/completions");
+    }
 }

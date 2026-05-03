@@ -90,6 +90,10 @@ enum Commands {
         /// Config file path (to load default audit path)
         #[arg(short, long)]
         config: Option<String>,
+
+        /// Audit/vault encryption key passphrase (or MIRAGE_VAULT_KEY env var)
+        #[arg(long)]
+        vault_key: Option<String>,
     },
     /// View vault mappings in interactive TUI
     Vault {
@@ -141,7 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     match command {
-        Commands::Audit { path, config } => {
+        Commands::Audit { path, config, vault_key } => {
             // Fallback chain: CLI arg → config file → current directory default
             let audit_path = if let Some(p) = path {
                 std::path::PathBuf::from(p)
@@ -170,7 +174,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 eprintln!();
             }
             
-            let mut viewer = audit_tui::AuditViewer::new(audit_path)?;
+            let cfg_for_audit = Config::load(config.as_deref());
+            let audit_key = if cfg_for_audit.audit.encrypted {
+                let passphrase = vault_key
+                    .or_else(|| std::env::var("MIRAGE_VAULT_KEY").ok())
+                    .ok_or("Audit is encrypted. Provide --vault-key or MIRAGE_VAULT_KEY.")?;
+                Some(Vault::key_from_passphrase(&passphrase))
+            } else {
+                None
+            };
+
+            let mut viewer = audit_tui::AuditViewer::new(audit_path, audit_key)?;
             viewer.run()?;
             return Ok(());
         }
@@ -310,17 +324,34 @@ async fn run_proxy(
         };
     }
 
+    let vault_key_resolved = vault_key
+        .or_else(|| std::env::var("MIRAGE_VAULT_KEY").ok());
+
     let audit_log = if cfg.audit.enabled {
+        let audit_key = if cfg.audit.encrypted {
+            Some(
+                vault_key_resolved
+                    .as_ref()
+                    .map(|p| Vault::key_from_passphrase(p))
+                    .ok_or("Audit encryption enabled but no vault key provided (--vault-key or MIRAGE_VAULT_KEY)")?,
+            )
+        } else {
+            None
+        };
+
         Some(Arc::new(AuditLog::new(
             cfg.audit.path.clone(),
             cfg.audit.log_values,
-        )))
+            cfg.audit.encrypted,
+            audit_key,
+            cfg.audit.max_size_mb,
+            cfg.audit.rotate_keep,
+            cfg.audit.max_age_days,
+        )?))
     } else {
         None
     };
 
-    let vault_key_resolved = vault_key
-        .or_else(|| std::env::var("MIRAGE_VAULT_KEY").ok());
     let vault_path_resolved = vault_path
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| cfg.vault.path.clone());
@@ -339,7 +370,14 @@ async fn run_proxy(
     let stats = Stats::new();
 
     let state = Arc::new(ProxyState {
-        client: Client::new(),
+        client: {
+            let mut builder = Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(30));
+            // Overall timeout only for non-streaming; streaming handled via per-request.
+            // Use a generous timeout for streaming LLM responses (5 minutes).
+            builder = builder.timeout(std::time::Duration::from_secs(300));
+            builder.build().expect("failed to build reqwest client")
+        },
         sessions: SessionManager::new(vault.clone()),
         config: cfg.clone(),
         audit_log,
